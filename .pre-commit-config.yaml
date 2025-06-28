@@ -1,0 +1,30 @@
+repos:
+  - repo: local
+    hooks:
+      - id: format
+        name: Format code
+        entry: just format
+        language: system
+        files: \.(ts|js|html|css)$
+        pass_filenames: false
+
+      - id: type-check
+        name: TypeScript type check
+        entry: just type-check
+        language: system
+        files: \.ts$
+        pass_filenames: false
+
+      - id: lint
+        name: ESLint
+        entry: just lint
+        language: system
+        files: \.(ts|js)$
+        pass_filenames: false
+
+      - id: build
+        name: Build extension
+        entry: just build
+        language: system
+        files: \.(ts|js|html|css|json)$
+        pass_filenames: false

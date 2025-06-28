@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json.schemastore.org/chrome-manifest.json",
+  "manifest_version": 3,
+  "version": "0.1.0",
+  "name": "Universal Inbox",
+  "description": "Universal Inbox browser extension",
+  "icons": {
+    "16": "icons/extension_16.png",
+    "32": "icons/extension_32.png",
+    "48": "icons/extension_48.png",
+    "128": "icons/extension_128.png"
+  },
+  "action": {
+    "default_title": "Send page to Universal Inbox"
+  },
+  "options_ui": {
+    "page": "src/options/index.html",
+    "open_in_tab": false
+  },
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "firefox:scripts": ["background/service_worker.js"]
+  },
+  "permissions": ["activeTab", "storage", "notifications"],
+  "optional_permissions": ["https://*/*", "http://localhost:8080/*"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*"],
+  "host_permissions": ["https://app.universal-inbox.com/*"],
+  "author": "David Rousselie",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "universal-inbox@universal-inbox.com",
+      "strict_min_version": "128.0"
+    }
+  }
+}
