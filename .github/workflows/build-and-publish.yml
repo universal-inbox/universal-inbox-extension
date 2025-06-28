@@ -1,0 +1,136 @@
+name: Build and Publish Extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish_chrome:
+        description: 'Publish to Chrome Web Store'
+        type: boolean
+        default: false
+      publish_firefox:
+        description: 'Publish to Firefox Add-ons'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      chrome_artifact: ${{ steps.build_chrome.outputs.artifact }}
+      firefox_artifact: ${{ steps.build_firefox.outputs.artifact }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run type checking
+        run: npm run type-check
+      
+      - name: Run linting
+        run: npm run lint
+      
+      - name: Get version
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Build Chrome extension
+        id: build_chrome
+        run: |
+          npm run build
+          cd dist/chrome
+          zip -r ../../universal-inbox-extension-chrome-v${{ steps.get_version.outputs.version }}.zip .
+          cd ../..
+          echo "artifact=universal-inbox-extension-chrome-v${{ steps.get_version.outputs.version }}.zip" >> $GITHUB_OUTPUT
+      
+      - name: Build Firefox extension
+        id: build_firefox
+        run: |
+          npm run build-firefox
+          cd dist/firefox
+          zip -r ../../universal-inbox-extension-firefox-v${{ steps.get_version.outputs.version }}.zip .
+          cd ../..
+          echo "artifact=universal-inbox-extension-firefox-v${{ steps.get_version.outputs.version }}.zip" >> $GITHUB_OUTPUT
+      
+      - name: Upload Chrome build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-extension
+          path: universal-inbox-extension-chrome-v${{ steps.get_version.outputs.version }}.zip
+      
+      - name: Upload Firefox build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-extension
+          path: universal-inbox-extension-firefox-v${{ steps.get_version.outputs.version }}.zip
+
+  publish-chrome:
+    needs: build
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_chrome == 'true')
+    
+    steps:
+      - name: Download Chrome artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: chrome-extension
+      
+      - name: Publish to Chrome Web Store
+        uses: PlasmoHQ/bpp@v3
+        with:
+          keys: ${{ secrets.BPP_KEYS }}
+          chrome-file: ${{ needs.build.outputs.chrome_artifact }}
+
+  publish-firefox:
+    needs: build
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_firefox == 'true')
+    
+    steps:
+      - name: Download Firefox artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: firefox-extension
+      
+      - name: Publish to Firefox Add-ons
+        uses: PlasmoHQ/bpp@v3
+        with:
+          keys: ${{ secrets.BPP_KEYS }}
+          firefox-file: ${{ needs.build.outputs.firefox_artifact }}
+
+  release:
+    needs: [build, publish-chrome, publish-firefox]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            chrome-extension/${{ needs.build.outputs.chrome_artifact }}
+            firefox-extension/${{ needs.build.outputs.firefox_artifact }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
