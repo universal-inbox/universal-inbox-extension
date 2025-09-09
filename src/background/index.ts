@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG } from "../types.ts";
 import type { NotificationPayload } from "../types.ts";
+import { updateBeforeSendHeadersHandler } from "../firefox.ts";
 
 // Handle extension icon click (action button)
 chrome.action.onClicked.addListener(
@@ -116,16 +117,16 @@ async function checkHostPermission(apiUrl: string): Promise<boolean> {
 // Handle installation
 chrome.runtime.onInstalled.addListener(
   (details: chrome.runtime.InstalledDetails): void => {
-    if (details.reason === "install") {
-      console.log("Universal Inbox extension installed");
+    // Set default settings if not already set
+    chrome.storage.sync.get(DEFAULT_CONFIG).then((result) => {
+      if (!result.apiUrl) {
+        chrome.storage.sync.set(DEFAULT_CONFIG);
+        console.log("Default settings applied");
+      }
 
-      // Set default settings if not already set
-      chrome.storage.sync.get(DEFAULT_CONFIG).then((result) => {
-        if (!result.apiUrl) {
-          chrome.storage.sync.set(DEFAULT_CONFIG);
-          console.log("Default settings applied");
-        }
-      });
-    }
+      updateBeforeSendHeadersHandler();
+
+      console.log(`Universal Inbox extension ${details.reason}ed`);
+    });
   }
 );

@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG } from "../types.ts";
 import type { StatusType } from "../types.ts";
+import { updateBeforeSendHeadersHandler } from "../firefox.ts";
 
 let apiUrlInput: HTMLInputElement;
 let settingsForm: HTMLFormElement;
@@ -32,6 +33,8 @@ async function saveSettings(apiUrl: string): Promise<boolean> {
     await chrome.storage.sync.set({
       apiUrl: apiUrl.trim(),
     });
+
+    await updateBeforeSendHeadersHandler();
 
     return true;
   } catch (error) {
