@@ -18,10 +18,6 @@ dist
 .env.test.local
 .env.production.local
 
-# lock files
-yarn.lock
-package-lock.json
-
 # debug files
 npm-debug.log*
 yarn-debug.log*
@@ -29,3 +25,4 @@ yarn-error.log*
 
 # extension.js
 extension-env.d.ts
+universal-inbox-extension*.zip

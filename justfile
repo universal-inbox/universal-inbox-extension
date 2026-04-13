@@ -18,8 +18,8 @@ build:
 
     npm run build
     cd dist/chrome
-    sed -i -e '/"contextualIdentities"/d' -e '/"webRequest/d' -e '/"cookies"/d' manifest.json
-    sed -i -e 's/"notifications",/"notifications"/' manifest.json
+    sed -i -e '/"contextualIdentities"/d' -e '/"webRequestBlocking"/d' manifest.json
+    sed -i -e 's/"alarms",/"alarms"/' manifest.json
     zip -r ../../universal-inbox-extension-chrome.zip .
     cd ../..
 

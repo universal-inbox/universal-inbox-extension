@@ -21,6 +21,7 @@ export async function updateBeforeSendHeadersHandler(): Promise<void> {
   chrome.webRequest.onBeforeSendHeaders.removeListener(
     beforeSendHeadersHandler
   );
+
   chrome.webRequest.onBeforeSendHeaders.addListener(
     beforeSendHeadersHandler,
     { urls: [`${apiUrl}/*`] },
@@ -43,15 +44,11 @@ function beforeSendHeadersHandler(
   // Check cache for container information
   const containerInfo = containerCache.get(domain);
   if (containerInfo && containerInfo.cookies) {
-    console.debug(`Found Firefox container for ${domain} with cookies`);
     const cookieHeaderIndex = headers.findIndex(
       (h: chrome.webRequest.HttpHeader) => h.name.toLowerCase() === "cookie"
     );
 
     if (cookieHeaderIndex === -1) {
-      console.debug(
-        `No cookies sent to ${domain}. Injecting cookies found from the Firefox container`
-      );
       headers.push({ name: "Cookie", value: containerInfo.cookies });
     }
   }
@@ -65,20 +62,42 @@ async function updateContainerCache(apiUrl: string): Promise<void> {
     const uiDomain = new URL(apiUrl).hostname;
     const container = await getContainerForDomain(apiUrl);
 
-    if (container) {
-      const cookies = await getCookiesForContainer(
-        container.cookieStoreId,
-        uiDomain
-      );
-      containerCache.set(uiDomain, {
-        cookieStoreId: container.cookieStoreId,
-        userContextId: container.userContextId,
-        cookies: cookies,
-      });
+    let cookieStoreId = container.cookieStoreId;
+    let userContextId = container.userContextId;
+    let cookies = await getCookiesForContainer(cookieStoreId, uiDomain);
+
+    // If MAC-assigned container has no cookies, scan all cookie stores
+    if (!cookies) {
+      const found = await findCookieStoreForDomain(uiDomain);
+      if (found) {
+        cookieStoreId = found.storeId;
+        cookies = found.cookies;
+        userContextId = null;
+      }
     }
+
+    containerCache.set(uiDomain, {
+      cookieStoreId,
+      userContextId,
+      cookies,
+    });
   } catch (error) {
     console.error("Failed to update container cache:", error);
   }
+}
+
+// Scan all cookie stores to find one with cookies for the given domain
+async function findCookieStoreForDomain(
+  domain: string
+): Promise<{ storeId: string; cookies: string } | null> {
+  const stores = await chrome.cookies.getAllCookieStores();
+  for (const store of stores) {
+    const cookies = await getCookiesForContainer(store.id, domain);
+    if (cookies) {
+      return { storeId: store.id, cookies };
+    }
+  }
+  return null;
 }
 
 // Get cookies for a specific container and domain, formatted as a Cookie header string
@@ -127,10 +146,14 @@ async function getContainerForDomain(url: string): Promise<any> {
       };
     }
   } catch (error) {
-    console.error(
-      "Multi-Account Containers not available or no permission:",
+    console.warn(
+      "Multi-Account Containers not available or no permission, falling back to default cookie store:",
       error
     );
-    return null;
+    return {
+      cookieStoreId: "firefox-default",
+      userContextId: null,
+      isPermanent: false,
+    };
   }
 }

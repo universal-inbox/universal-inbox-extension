@@ -1,6 +1,5 @@
 import { DEFAULT_CONFIG } from "../types.ts";
 import type { StatusType } from "../types.ts";
-import { updateBeforeSendHeadersHandler } from "../firefox.ts";
 
 let apiUrlInput: HTMLInputElement;
 let settingsForm: HTMLFormElement;
@@ -12,6 +11,7 @@ document.addEventListener("DOMContentLoaded", async (): Promise<void> => {
   statusDiv = document.getElementById("status") as HTMLDivElement;
 
   await loadSettings();
+  await verifyConnection();
 
   settingsForm.addEventListener("submit", handleSaveSettings);
 });
@@ -33,8 +33,6 @@ async function saveSettings(apiUrl: string): Promise<boolean> {
     await chrome.storage.sync.set({
       apiUrl: apiUrl.trim(),
     });
-
-    await updateBeforeSendHeadersHandler();
 
     return true;
   } catch (error) {
@@ -69,11 +67,13 @@ async function handleSaveSettings(event: Event): Promise<void> {
   }
 
   const success = await saveSettings(apiUrl);
-  if (success) {
-    showStatus("Settings saved successfully!", "success");
-  } else {
+  if (!success) {
     showStatus("Error saving settings", "error");
+    return;
   }
+
+  showStatus("Settings saved. Verifying connection...", "success");
+  await verifyConnection(apiUrl);
 }
 
 // Request host permission for a given URL
@@ -81,14 +81,6 @@ async function requestHostPermission(apiUrl: string): Promise<boolean> {
   try {
     const url = new URL(apiUrl);
     const origin = `${url.protocol}//${url.host}/*`;
-
-    // const hasPermission = await chrome.permissions.contains({
-    //   origins: [origin],
-    // });
-
-    // if (hasPermission) {
-    //   return true;
-    // }
 
     const granted = await chrome.permissions.request({
       origins: [origin],
@@ -106,10 +98,28 @@ function showStatus(message: string, type: StatusType): void {
   statusDiv.textContent = message;
   statusDiv.className = `status ${type}`;
   statusDiv.style.display = "block";
+}
 
-  if (type === "success") {
-    setTimeout(() => {
-      statusDiv.style.display = "none";
-    }, 4000);
+// Verify API connectivity via the background script
+async function verifyConnection(apiUrl?: string): Promise<void> {
+  if (!apiUrl) {
+    const result = await chrome.storage.sync.get(DEFAULT_CONFIG);
+    apiUrl = result.apiUrl || DEFAULT_CONFIG.apiUrl;
+  }
+
+  try {
+    const result: { ok: boolean; error?: string } =
+      await chrome.runtime.sendMessage({
+        type: "VERIFY_API",
+        apiUrl,
+      });
+
+    if (result.ok) {
+      showStatus("Connected and authenticated.", "success");
+    } else {
+      showStatus(`Connection failed: ${result.error}`, "error");
+    }
+  } catch (error) {
+    showStatus(`Connection check failed: ${error}`, "error");
   }
 }
