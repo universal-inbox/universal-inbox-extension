@@ -1,6 +1,52 @@
 import { DEFAULT_CONFIG } from "../types.ts";
 import type { NotificationPayload } from "../types.ts";
 import { updateBeforeSendHeadersHandler } from "../firefox.ts";
+import { startPolling } from "../slack/poller.ts";
+
+// Listen for messages from the options page
+chrome.runtime.onMessage.addListener(
+  (
+    message: { type: string; apiUrl?: string },
+    _sender: chrome.runtime.MessageSender,
+    sendResponse: (response: { ok: boolean; error?: string }) => void
+  ): boolean => {
+    if (message.type === "VERIFY_API" && message.apiUrl) {
+      verifyApiConnectivity(message.apiUrl).then(
+        (result) => sendResponse(result),
+        (err) => sendResponse({ ok: false, error: String(err) })
+      );
+      return true;
+    }
+
+    return false;
+  }
+);
+
+// Verify API connectivity by fetching /api/users/me
+async function verifyApiConnectivity(
+  apiUrl: string
+): Promise<{ ok: boolean; error?: string }> {
+  // Ensure cookie injection is up to date for this URL
+  await updateBeforeSendHeadersHandler();
+
+  const response = await fetch(`${apiUrl}/api/users/me`, {
+    method: "GET",
+    credentials: "include",
+  });
+
+  if (response.ok) {
+    return { ok: true };
+  }
+
+  if (response.status === 401) {
+    return { ok: false, error: "Not authenticated. Please log in first." };
+  }
+
+  return {
+    ok: false,
+    error: `${response.status} ${response.statusText}`,
+  };
+}
 
 // Handle extension icon click (action button)
 chrome.action.onClicked.addListener(
@@ -17,7 +63,6 @@ chrome.action.onClicked.addListener(
         url.startsWith("moz-extension://") ||
         url.startsWith("about:")
       ) {
-        console.log("Cannot send system URLs to Universal Inbox");
         return;
       }
 
@@ -130,3 +175,31 @@ chrome.runtime.onInstalled.addListener(
     });
   }
 );
+
+// Re-register webRequest handler when apiUrl changes in storage
+chrome.storage.onChanged.addListener(
+  (
+    changes: { [key: string]: chrome.storage.StorageChange },
+    areaName: string
+  ) => {
+    if (areaName === "sync" && changes.apiUrl) {
+      updateBeforeSendHeadersHandler();
+    }
+  }
+);
+
+// Initialize webRequest handler at service worker startup
+// (onInstalled only fires on install/update, not on every SW restart)
+updateBeforeSendHeadersHandler();
+
+// Retry after a delay so MAC extension has time to initialize
+const CONTAINER_RETRY_ALARM = "retry-container-cache";
+chrome.alarms.create(CONTAINER_RETRY_ALARM, { delayInMinutes: 0.15 });
+chrome.alarms.onAlarm.addListener((alarm: chrome.alarms.Alarm) => {
+  if (alarm.name === CONTAINER_RETRY_ALARM) {
+    updateBeforeSendHeadersHandler();
+  }
+});
+
+// Start the Slack bridge poller on service worker startup
+startPolling();

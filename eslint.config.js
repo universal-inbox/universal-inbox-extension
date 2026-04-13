@@ -26,7 +26,10 @@ export default [
         HTMLFormElement: 'readonly',
         HTMLButtonElement: 'readonly',
         HTMLDivElement: 'readonly',
-        Event: 'readonly'
+        Event: 'readonly',
+        FormData: 'readonly',
+        MessageEvent: 'readonly',
+        localStorage: 'readonly'
       }
     },
     plugins: {
