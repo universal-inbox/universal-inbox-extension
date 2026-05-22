@@ -176,6 +176,12 @@ chrome.runtime.onInstalled.addListener(
   }
 );
 
+// Wake the background script on browser startup so persisted alarms fire and
+// the Slack-bridge poller resumes without requiring the user to open DevTools.
+chrome.runtime.onStartup.addListener(() => {
+  console.log("[Slack Bridge] Browser started — extension waking");
+});
+
 // Re-register webRequest handler when apiUrl changes in storage
 chrome.storage.onChanged.addListener(
   (
