@@ -12,6 +12,35 @@ export interface ExtensionCredential {
   user_id: string;
 }
 
+// Thrown when the API rejects the request as unauthenticated (401), so the
+// poller can stop instead of retrying with the same missing session.
+export class UnauthorizedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+async function throwResponseError(
+  response: Awaited<ReturnType<typeof fetch>>,
+  context: string
+): Promise<never> {
+  const errorText = await response.text();
+  const message = `${context}: ${response.status} ${errorText}`;
+  if (response.status === 401) {
+    throw new UnauthorizedError(message);
+  }
+  throw new Error(message);
+}
+
+export async function isAuthenticated(apiUrl: string): Promise<boolean> {
+  const response = await fetch(`${apiUrl}/api/users/me`, {
+    method: "GET",
+    credentials: "include",
+  });
+  return response.ok;
+}
+
 export async function fetchPendingActions(
   apiUrl: string,
   credentials: ExtensionCredential[]
@@ -30,10 +59,7 @@ export async function fetchPendingActions(
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `Failed to fetch pending actions: ${response.status} ${errorText}`
-    );
+    await throwResponseError(response, "Failed to fetch pending actions");
   }
 
   const actions: PendingSlackAction[] = await response.json();
@@ -54,10 +80,7 @@ export async function reportActionComplete(
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `Failed to report action complete: ${response.status} ${errorText}`
-    );
+    await throwResponseError(response, "Failed to report action complete");
   }
 }
 
@@ -79,9 +102,6 @@ export async function reportActionFailed(
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `Failed to report action failure: ${response.status} ${errorText}`
-    );
+    await throwResponseError(response, "Failed to report action failure");
   }
 }

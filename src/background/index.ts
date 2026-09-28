@@ -1,7 +1,7 @@
 import { DEFAULT_CONFIG } from "../types.ts";
 import type { NotificationPayload } from "../types.ts";
 import { updateBeforeSendHeadersHandler } from "../firefox.ts";
-import { startPolling } from "../slack/poller.ts";
+import { resumePollingIfAuthenticated, startPolling } from "../slack/poller.ts";
 
 // Listen for messages from the options page
 chrome.runtime.onMessage.addListener(
@@ -35,6 +35,7 @@ async function verifyApiConnectivity(
   });
 
   if (response.ok) {
+    resumePollingIfAuthenticated();
     return { ok: true };
   }
 
@@ -189,7 +190,24 @@ chrome.storage.onChanged.addListener(
     areaName: string
   ) => {
     if (areaName === "sync" && changes.apiUrl) {
-      updateBeforeSendHeadersHandler();
+      updateBeforeSendHeadersHandler().then(resumePollingIfAuthenticated);
+    }
+  }
+);
+
+// A new cookie on the API host may mean the user just logged in: resume the
+// Slack bridge poller if a previous 401 paused it.
+chrome.cookies.onChanged.addListener(
+  async (changeInfo: chrome.cookies.CookieChangeInfo): Promise<void> => {
+    if (changeInfo.removed) {
+      return;
+    }
+    const settings = await chrome.storage.sync.get(DEFAULT_CONFIG);
+    const apiUrl: string = settings.apiUrl || DEFAULT_CONFIG.apiUrl;
+    const apiHost = new URL(apiUrl).hostname;
+    const cookieDomain = changeInfo.cookie.domain.replace(/^\./, "");
+    if (apiHost === cookieDomain || apiHost.endsWith(`.${cookieDomain}`)) {
+      resumePollingIfAuthenticated();
     }
   }
 );

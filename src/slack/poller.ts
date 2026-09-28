@@ -5,27 +5,88 @@ import {
   unsubscribeFromThread,
   getSlackTabCredentials,
 } from "./api.ts";
+import { updateBeforeSendHeadersHandler } from "../firefox.ts";
 import {
   fetchPendingActions,
+  isAuthenticated,
   reportActionComplete,
   reportActionFailed,
+  UnauthorizedError,
   type PendingSlackAction,
 } from "./universal-inbox-api.ts";
 
 const ALARM_NAME = "slack-bridge-poll";
 const POLL_INTERVAL_MINUTES = 0.5; // 30 seconds
+// Set when the API answered 401: polling stays stopped until the user is
+// authenticated again, instead of hammering the API every 30 seconds.
+const AUTH_PAUSED_KEY = "slackBridgeAuthPaused";
 
-export function startPolling(): void {
-  chrome.alarms.create(ALARM_NAME, { periodInMinutes: POLL_INTERVAL_MINUTES });
-  chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === ALARM_NAME) {
-      pollAndExecute();
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === ALARM_NAME) {
+    pollAndExecute();
+  }
+});
+
+// Start polling on service worker startup, unless a previous 401 paused it
+// and the user is still not authenticated.
+export async function startPolling(): Promise<void> {
+  const stored = await chrome.storage.local.get(AUTH_PAUSED_KEY);
+  if (stored[AUTH_PAUSED_KEY]) {
+    await resumePollingIfAuthenticated();
+    return;
+  }
+  schedulePolling();
+}
+
+let resumeCheck: Promise<void> | null = null;
+
+// Resume a paused poller if the API now accepts our session. Cheap no-op when
+// polling is not paused, so it can be called on every cookie change.
+export function resumePollingIfAuthenticated(): Promise<void> {
+  if (!resumeCheck) {
+    resumeCheck = checkAuthAndResume().finally(() => {
+      resumeCheck = null;
+    });
+  }
+  return resumeCheck;
+}
+
+async function checkAuthAndResume(): Promise<void> {
+  const stored = await chrome.storage.local.get(AUTH_PAUSED_KEY);
+  if (!stored[AUTH_PAUSED_KEY]) {
+    return;
+  }
+  try {
+    // Refresh the Firefox container cookie cache before probing
+    await updateBeforeSendHeadersHandler();
+    const config = await getConfig();
+    if (!(await isAuthenticated(config.apiUrl))) {
+      console.log("[Slack Bridge] Still not authenticated, polling paused");
+      return;
     }
-  });
+  } catch (error) {
+    console.error("[Slack Bridge] Authentication check failed:", error);
+    return;
+  }
+  await chrome.storage.local.remove(AUTH_PAUSED_KEY);
+  schedulePolling();
+  pollAndExecute();
+}
+
+function schedulePolling(): void {
+  chrome.alarms.create(ALARM_NAME, { periodInMinutes: POLL_INTERVAL_MINUTES });
   console.log(
     "[Slack Bridge] Polling started with interval:",
     POLL_INTERVAL_MINUTES * 60,
     "seconds"
+  );
+}
+
+async function pausePollingUntilAuthenticated(): Promise<void> {
+  await chrome.storage.local.set({ [AUTH_PAUSED_KEY]: true });
+  await chrome.alarms.clear(ALARM_NAME);
+  console.warn(
+    "[Slack Bridge] Not authenticated, polling paused until next login"
   );
 }
 
@@ -55,6 +116,9 @@ async function pollAndExecute(): Promise<void> {
         await reportActionComplete(config.apiUrl, action.id);
         succeeded++;
       } catch (error) {
+        if (error instanceof UnauthorizedError) {
+          throw error;
+        }
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         console.error("[Slack Bridge] Action failed:", action.id, errorMessage);
@@ -67,6 +131,10 @@ async function pollAndExecute(): Promise<void> {
       `[Slack Bridge] Poll complete: ${succeeded} succeeded, ${failed} failed`
     );
   } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      await pausePollingUntilAuthenticated();
+      return;
+    }
     console.error("[Slack Bridge] Poll error:", error);
   }
 }
