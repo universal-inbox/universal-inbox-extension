@@ -52,25 +52,19 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
       
+      - name: Setup just
+        uses: extractions/setup-just@v3
+
       - name: Build Chrome extension
         id: build_chrome
         run: |
-          npm run build
-          cd dist/chrome
-          # Strip Firefox-only permissions rejected by the Chrome Web Store
-          jq '.permissions -= ["contextualIdentities", "webRequestBlocking"]' manifest.json > manifest.tmp.json
-          mv manifest.tmp.json manifest.json
-          zip -r ../../universal-inbox-extension-chrome-v${{ steps.get_version.outputs.version }}.zip .
-          cd ../..
+          just build ${{ steps.get_version.outputs.version }}
           echo "artifact=universal-inbox-extension-chrome-v${{ steps.get_version.outputs.version }}.zip" >> $GITHUB_OUTPUT
       
       - name: Build Firefox extension
         id: build_firefox
         run: |
-          npm run build-firefox
-          cd dist/firefox
-          zip -r ../../universal-inbox-extension-firefox-v${{ steps.get_version.outputs.version }}.zip .
-          cd ../..
+          just build-firefox ${{ steps.get_version.outputs.version }}
           echo "artifact=universal-inbox-extension-firefox-v${{ steps.get_version.outputs.version }}.zip" >> $GITHUB_OUTPUT
       
       - name: Upload Chrome build artifact

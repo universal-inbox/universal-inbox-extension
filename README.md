@@ -42,9 +42,9 @@ The project uses [Just](https://just.systems/) as a command runner for consisten
 
 #### Building
 - `just build` - Build for Chrome/Chromium browsers
-  Extension archive is `universal-inbox-extension-chrome.zip`
+  Extension archive is `universal-inbox-extension-chrome-v<version>.zip`
 - `just build-firefox` - Build for Firefox
-  Extension archive is `universal-inbox-extension-firefox.zip`
+  Extension archive is `universal-inbox-extension-firefox-v<version>.zip`
 
 #### Code Quality
 - `just format` - Format code with Prettier
