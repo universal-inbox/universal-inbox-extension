@@ -36,6 +36,26 @@ build-firefox version=version:
     rm -f ../../universal-inbox-extension-firefox-v{{ version }}.zip
     zip -r ../../universal-inbox-extension-firefox-v{{ version }}.zip .
 
+# Tag the current commit as v<version> and push the branch then the tag.
+# Pushing a v* tag runs the build-and-publish workflow (store release).
+release-tag version=version remote="github":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    tag="v{{ version }}"
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Working tree is not clean, commit first" >&2
+        exit 1
+    fi
+    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+        echo "Tag $tag already exists" >&2
+        exit 1
+    fi
+    git tag "$tag"
+    git push {{ remote }} "$branch"
+    git push {{ remote }} "$tag"
+
 build-source:
     git ls-files | zip -@ universal-inbox-extension-src.zip
 
