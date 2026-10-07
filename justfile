@@ -48,4 +48,7 @@ type-check:
 lint:
     npm run lint
 
-check: type-check lint
+test:
+    npm run test
+
+check: type-check lint test

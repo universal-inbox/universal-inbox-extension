@@ -28,6 +28,7 @@
     "build-firefox": "extension build --browser firefox --polyfill",
     "format": "prettier --write 'src/**/*.{js,ts,css,html}'",
     "lint": "eslint 'src/**/*.{js,ts}'",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "node --test 'src/**/*.test.ts'"
   }
 }

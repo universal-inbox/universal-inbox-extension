@@ -3,6 +3,8 @@ import {
   markThreadAsRead,
   markChannelAsRead,
   unsubscribeFromThread,
+  getChannelLastRead,
+  getThreadLastRead,
   getSlackTabCredentials,
   findSlackTab,
   hasSlackPermission,
@@ -20,6 +22,7 @@ import {
   UnauthorizedError,
   type PendingSlackAction,
 } from "./universal-inbox-api.ts";
+import { latestSlackTs, shouldMarkAsRead } from "./ts.ts";
 
 const ALARM_NAME = "slack-bridge-poll";
 const POLL_INTERVAL_MINUTES = 0.5; // 30 seconds
@@ -181,6 +184,24 @@ async function executeAction(action: PendingSlackAction): Promise<void> {
   switch (action.action_type) {
     case "MarkAsRead": {
       const isThread = action.slack_thread_ts !== action.slack_last_message_ts;
+      // The user may have read further directly in Slack since the action
+      // was queued: never move the read marker backwards
+      const currentLastRead = isThread
+        ? await getThreadLastRead(
+            action.slack_team_id,
+            action.slack_channel_id,
+            action.slack_thread_ts
+          )
+        : await getChannelLastRead(
+            action.slack_team_id,
+            action.slack_channel_id
+          );
+      if (!shouldMarkAsRead(action.slack_last_message_ts, currentLastRead)) {
+        console.log(
+          `[Slack Bridge] Skip mark: Slack last_read ${currentLastRead} >= action ts ${action.slack_last_message_ts}`
+        );
+        break;
+      }
       const result = isThread
         ? await markThreadAsRead(
             action.slack_team_id,
@@ -199,11 +220,16 @@ async function executeAction(action: PendingSlackAction): Promise<void> {
       break;
     }
     case "Unsubscribe": {
+      const currentLastRead = await getThreadLastRead(
+        action.slack_team_id,
+        action.slack_channel_id,
+        action.slack_thread_ts
+      );
       const result = await unsubscribeFromThread(
         action.slack_team_id,
         action.slack_channel_id,
         action.slack_thread_ts,
-        action.slack_last_message_ts
+        latestSlackTs(action.slack_last_message_ts, currentLastRead)
       );
       if (!result.ok) {
         throw new Error(`Slack API error: ${result.error || "unknown"}`);

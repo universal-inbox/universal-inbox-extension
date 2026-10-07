@@ -188,6 +188,60 @@ export async function getThreadSubscription(
   });
 }
 
+function readLastRead(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function throwIfNotOk(result: SlackApiResult, apiMethod: string): void {
+  if (!result.ok) {
+    throw new Error(
+      `Slack API error on ${apiMethod}: ${result.error || "unknown"}`
+    );
+  }
+}
+
+// Current read marker of a channel for the logged-in user
+export async function getChannelLastRead(
+  teamId: string,
+  channel: string
+): Promise<string | undefined> {
+  const result = await fetchWithSlackAuth(teamId, "conversations.info", {
+    channel,
+  });
+  throwIfNotOk(result, "conversations.info");
+  const info = result.channel as Record<string, unknown> | undefined;
+  return readLastRead(info?.last_read);
+}
+
+// Current read marker of a thread for the logged-in user. The thread parent
+// returned by conversations.replies carries it when the user is subscribed;
+// subscriptions.thread.get is the fallback.
+export async function getThreadLastRead(
+  teamId: string,
+  channel: string,
+  threadTs: string
+): Promise<string | undefined> {
+  const replies = await fetchWithSlackAuth(teamId, "conversations.replies", {
+    channel,
+    ts: threadTs,
+    limit: "1",
+  });
+  throwIfNotOk(replies, "conversations.replies");
+  const messages = replies.messages as
+    | Array<Record<string, unknown>>
+    | undefined;
+  const parent = messages?.find((message) => message.ts === threadTs);
+  const lastRead = readLastRead(parent?.last_read);
+  if (lastRead !== undefined) {
+    return lastRead;
+  }
+
+  const subscription = await getThreadSubscription(teamId, channel, threadTs);
+  throwIfNotOk(subscription, "subscriptions.thread.get");
+  const data = subscription.subscription as Record<string, unknown> | undefined;
+  return readLastRead(data?.last_read);
+}
+
 export async function markThreadAsRead(
   teamId: string,
   channel: string,
