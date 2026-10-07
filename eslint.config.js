@@ -22,6 +22,7 @@ export default [
         fetch: 'readonly',
         URL: 'readonly',
         setTimeout: 'readonly',
+        clearTimeout: 'readonly',
         HTMLInputElement: 'readonly',
         HTMLFormElement: 'readonly',
         HTMLButtonElement: 'readonly',

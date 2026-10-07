@@ -6,6 +6,22 @@ export interface SlackApiResult {
   [key: string]: unknown;
 }
 
+// Slack origins the bridge needs: without them Firefox hides Slack tab URLs
+// from tabs.query and blocks scripting.executeScript on them
+export const SLACK_ORIGINS = [
+  "https://app.slack.com/*",
+  "https://*.slack.com/*",
+];
+
+export async function hasSlackPermission(): Promise<boolean> {
+  try {
+    return await chrome.permissions.contains({ origins: SLACK_ORIGINS });
+  } catch (error) {
+    console.error("Error checking Slack host permission:", error);
+    return false;
+  }
+}
+
 export async function findSlackTab(): Promise<number | null> {
   const tabs = await chrome.tabs.query({
     url: "https://app.slack.com/*",

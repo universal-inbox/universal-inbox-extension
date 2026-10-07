@@ -4,8 +4,14 @@ import {
   markChannelAsRead,
   unsubscribeFromThread,
   getSlackTabCredentials,
+  findSlackTab,
+  hasSlackPermission,
 } from "./api.ts";
-import { updateBeforeSendHeadersHandler } from "../firefox.ts";
+import {
+  refreshContainerCache,
+  updateBeforeSendHeadersHandler,
+} from "../firefox.ts";
+import { setConnectionStatus } from "../connection-status.ts";
 import {
   fetchPendingActions,
   isAuthenticated,
@@ -62,12 +68,15 @@ async function checkAuthAndResume(): Promise<void> {
     const config = await getConfig();
     if (!(await isAuthenticated(config.apiUrl))) {
       console.log("[Slack Bridge] Still not authenticated, polling paused");
+      setConnectionStatus(false, "not logged in");
       return;
     }
   } catch (error) {
     console.error("[Slack Bridge] Authentication check failed:", error);
+    setConnectionStatus(false, "unreachable");
     return;
   }
+  setConnectionStatus(true);
   await chrome.storage.local.remove(AUTH_PAUSED_KEY);
   schedulePolling();
   pollAndExecute();
@@ -101,9 +110,37 @@ async function pollAndExecute(): Promise<void> {
 
     // Extract credentials live from open Slack tabs
     const liveCredentials = await getSlackTabCredentials();
+    // Refresh the Firefox container cookies so a stale cache cannot send the
+    // request without session
+    await refreshContainerCache();
     // Always poll (even with empty credentials) so the API records the heartbeat
-    const actions = await fetchPendingActions(config.apiUrl, liveCredentials);
+    let actions: PendingSlackAction[];
+    try {
+      actions = await fetchPendingActions(config.apiUrl, liveCredentials);
+    } catch (error) {
+      // fetch() rejects with a TypeError on network failure
+      if (error instanceof TypeError) {
+        setConnectionStatus(false, "unreachable");
+      }
+      throw error;
+    }
+    setConnectionStatus(true);
     if (actions.length === 0) {
+      return;
+    }
+
+    // Without a reachable Slack tab every action would fail: leave them
+    // pending on the API so the next poll retries them
+    if (!(await hasSlackPermission())) {
+      console.warn(
+        `[Slack Bridge] Slack access not granted, keeping ${actions.length} action(s) pending`
+      );
+      return;
+    }
+    if ((await findSlackTab()) === null) {
+      console.warn(
+        `[Slack Bridge] No Slack tab open, keeping ${actions.length} action(s) pending`
+      );
       return;
     }
 
@@ -132,6 +169,7 @@ async function pollAndExecute(): Promise<void> {
     );
   } catch (error) {
     if (error instanceof UnauthorizedError) {
+      setConnectionStatus(false, "session expired");
       await pausePollingUntilAuthenticated();
       return;
     }

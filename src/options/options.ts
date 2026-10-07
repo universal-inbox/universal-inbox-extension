@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG } from "../types.ts";
 import type { StatusType } from "../types.ts";
+import { SLACK_ORIGINS, hasSlackPermission } from "../slack/api.ts";
 
 let apiUrlInput: HTMLInputElement;
 let settingsForm: HTMLFormElement;
@@ -76,14 +77,15 @@ async function handleSaveSettings(event: Event): Promise<void> {
   await verifyConnection(apiUrl);
 }
 
-// Request host permission for a given URL
+// Request host permission for the API URL and the Slack origins used by the
+// Slack bridge, in a single prompt (must run within the submit user gesture)
 async function requestHostPermission(apiUrl: string): Promise<boolean> {
   try {
     const url = new URL(apiUrl);
     const origin = `${url.protocol}//${url.host}/*`;
 
     const granted = await chrome.permissions.request({
-      origins: [origin],
+      origins: [origin, ...SLACK_ORIGINS],
     });
 
     return granted;
@@ -114,10 +116,15 @@ async function verifyConnection(apiUrl?: string): Promise<void> {
         apiUrl,
       });
 
-    if (result.ok) {
-      showStatus("Connected and authenticated.", "success");
-    } else {
+    if (!result.ok) {
       showStatus(`Connection failed: ${result.error}`, "error");
+    } else if (!(await hasSlackPermission())) {
+      showStatus(
+        "Connected, but Slack access is not granted: click Save to grant it.",
+        "error"
+      );
+    } else {
+      showStatus("Connected and authenticated.", "success");
     }
   } catch (error) {
     showStatus(`Connection check failed: ${error}`, "error");

@@ -1,6 +1,11 @@
 import { DEFAULT_CONFIG } from "../types.ts";
 import type { NotificationPayload } from "../types.ts";
-import { updateBeforeSendHeadersHandler } from "../firefox.ts";
+import {
+  isFirefox,
+  refreshContainerCache,
+  updateBeforeSendHeadersHandler,
+} from "../firefox.ts";
+import { checkConnection, setConnectionStatus } from "../connection-status.ts";
 import { resumePollingIfAuthenticated, startPolling } from "../slack/poller.ts";
 
 // Listen for messages from the options page
@@ -35,11 +40,13 @@ async function verifyApiConnectivity(
   });
 
   if (response.ok) {
+    setConnectionStatus(true);
     resumePollingIfAuthenticated();
     return { ok: true };
   }
 
   if (response.status === 401) {
+    setConnectionStatus(false, "not logged in");
     return { ok: false, error: "Not authenticated. Please log in first." };
   }
 
@@ -84,6 +91,7 @@ async function sendUrlToUniversalInbox(
     const hasPermission = await checkHostPermission(apiUrl);
     if (!hasPermission) {
       console.error("Missing host permission for:", apiUrl);
+      setConnectionStatus(false, "missing host permission");
       chrome.notifications.create({
         type: "basic",
         iconUrl: "/icons/extension_128.png",
@@ -114,6 +122,7 @@ async function sendUrlToUniversalInbox(
 
     if (response.ok) {
       console.log("URL sent successfully to Universal Inbox");
+      setConnectionStatus(true);
 
       chrome.notifications.create({
         type: "basic",
@@ -124,6 +133,9 @@ async function sendUrlToUniversalInbox(
     } else {
       const errorText = await response.text();
       console.error("API Error:", response.status, errorText);
+      if (response.status === 401) {
+        setConnectionStatus(false, "not logged in");
+      }
 
       chrome.notifications.create({
         type: "basic",
@@ -190,38 +202,67 @@ chrome.storage.onChanged.addListener(
     areaName: string
   ) => {
     if (areaName === "sync" && changes.apiUrl) {
-      updateBeforeSendHeadersHandler().then(resumePollingIfAuthenticated);
+      updateBeforeSendHeadersHandler().then(() => {
+        resumePollingIfAuthenticated();
+        checkConnection();
+      });
     }
   }
 );
 
-// A new cookie on the API host may mean the user just logged in: resume the
-// Slack bridge poller if a previous 401 paused it.
+// A cookie change on the API host may mean the user just logged in or out:
+// refresh the container cookies and the connection status, and resume the
+// Slack bridge poller if a previous 401 paused it. Debounced because a login
+// or logout changes several cookies at once.
+const COOKIE_CHANGE_DEBOUNCE_MS = 1000;
+let cookieChangeTimer: ReturnType<typeof setTimeout> | null = null;
+let cookieAdded = false;
 chrome.cookies.onChanged.addListener(
   async (changeInfo: chrome.cookies.CookieChangeInfo): Promise<void> => {
-    if (changeInfo.removed) {
-      return;
-    }
     const settings = await chrome.storage.sync.get(DEFAULT_CONFIG);
     const apiUrl: string = settings.apiUrl || DEFAULT_CONFIG.apiUrl;
     const apiHost = new URL(apiUrl).hostname;
     const cookieDomain = changeInfo.cookie.domain.replace(/^\./, "");
-    if (apiHost === cookieDomain || apiHost.endsWith(`.${cookieDomain}`)) {
-      resumePollingIfAuthenticated();
+    if (apiHost !== cookieDomain && !apiHost.endsWith(`.${cookieDomain}`)) {
+      return;
     }
+    cookieAdded ||= !changeInfo.removed;
+    if (cookieChangeTimer) {
+      clearTimeout(cookieChangeTimer);
+    }
+    cookieChangeTimer = setTimeout(async () => {
+      cookieChangeTimer = null;
+      const resume = cookieAdded;
+      cookieAdded = false;
+      if (isFirefox()) {
+        await refreshContainerCache();
+      }
+      if (resume) {
+        await resumePollingIfAuthenticated();
+      }
+      checkConnection();
+    }, COOKIE_CHANGE_DEBOUNCE_MS);
   }
 );
 
+// Granting or revoking Slack / API access changes the connection status
+chrome.permissions.onAdded.addListener(() => {
+  checkConnection();
+});
+chrome.permissions.onRemoved.addListener(() => {
+  checkConnection();
+});
+
 // Initialize webRequest handler at service worker startup
 // (onInstalled only fires on install/update, not on every SW restart)
-updateBeforeSendHeadersHandler();
+updateBeforeSendHeadersHandler().then(checkConnection);
 
 // Retry after a delay so MAC extension has time to initialize
 const CONTAINER_RETRY_ALARM = "retry-container-cache";
 chrome.alarms.create(CONTAINER_RETRY_ALARM, { delayInMinutes: 0.15 });
 chrome.alarms.onAlarm.addListener((alarm: chrome.alarms.Alarm) => {
   if (alarm.name === CONTAINER_RETRY_ALARM) {
-    updateBeforeSendHeadersHandler();
+    updateBeforeSendHeadersHandler().then(checkConnection);
   }
 });
 
